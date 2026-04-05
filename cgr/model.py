@@ -154,8 +154,7 @@ class CrossAttentionPositionPreference(nn.Module):
 class HierarchicalAttentionBlock(nn.Module):
     """One block of Hierarchical Attention with Local Structural Bias (Section 4.2).
 
-    Each block produces six expert representations that are later fused by the
-    PLE gates (Section 4.3):
+    Each block produces six expert representations:
 
     1. **Shared self-attention** — global causal SA applied to all items.
        Captures universal inter-item dependencies.
@@ -163,8 +162,8 @@ class HierarchicalAttentionBlock(nn.Module):
        shared output, specialised for the exposure-prediction task.
     3. **CLK-specific self-attention** — same as above but specialised for
        click prediction.
-    4. **Cross-attention** — models position preference (first-slot bias,
-       ad-slot sensitivity).
+    4. **Cross-attention** — models user–item position preference using
+       separate user-side and item-side representations (Eq. 12).
     5. **LSA-4** — local self-attention with window=4 to capture short-range
        feed browsing patterns.
     6. **LSA-6** — local self-attention with window=6 for slightly wider
@@ -180,7 +179,7 @@ class HierarchicalAttentionBlock(nn.Module):
         # Task-specific self-attention (one per prediction objective)
         self.exp_self_attn = MultiHeadSelfAttention(d_model, n_heads, dropout)
         self.clk_self_attn = MultiHeadSelfAttention(d_model, n_heads, dropout)
-        # Cross-attention for position preference
+        # Cross-attention for position preference (user queries into items)
         self.cross_attn = CrossAttentionPositionPreference(d_model, n_heads, dropout)
         # Local self-attention with windows 4 and 6
         self.lsa_4 = MultiHeadSelfAttention(d_model, n_heads, dropout)
@@ -193,16 +192,24 @@ class HierarchicalAttentionBlock(nn.Module):
         self.norm_lsa4 = nn.LayerNorm(d_model)
         self.norm_lsa6 = nn.LayerNorm(d_model)
 
-    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+    def forward(
+        self,
+        x: torch.Tensor,
+        user_repr: torch.Tensor,
+        item_repr: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
         """Run all six attention experts and return their outputs.
 
         Args:
             x: [B, L, D] input sequence (fused item representations).
+            user_repr: [B, L, D] position-aware user-side representations
+                for cross-attention (Eq. 12).
+            item_repr: [B, L, D] position-aware item-side representations
+                for cross-attention (Eq. 12).
 
         Returns:
             dict with keys ``"shared"``, ``"exp"``, ``"clk"``, ``"cross"``,
             ``"lsa4"``, ``"lsa6"`` — each mapping to a [B, L, D] tensor.
-            These are consumed by ``PLEFusion`` in the next stage.
         """
         B, L, D = x.shape
         device = x.device
@@ -215,8 +222,8 @@ class HierarchicalAttentionBlock(nn.Module):
         h_exp = self.norm_exp(h_shared + self.exp_self_attn(h_shared, mask=causal))
         h_clk = self.norm_clk(h_shared + self.clk_self_attn(h_shared, mask=causal))
 
-        # Cross-attention for position preference (no causal mask — symmetric)
-        h_cross = self.norm_cross(x + self.cross_attn(x, x))
+        # Cross-attention: user queries into item keys/values (Eq. 12)
+        h_cross = self.norm_cross(x + self.cross_attn(user_repr, item_repr))
 
         # Local self-attention with two window sizes
         h_lsa4 = self.norm_lsa4(x + self.lsa_4(x, mask=band4))
@@ -278,47 +285,62 @@ class PLEFusion(nn.Module):
     """PLE fusion layer producing task-specific representations (Section 4.3).
 
     The paper states:
-    * The **EXP branch** integrates 12 experts (shared, exp, clk ×2 tasks +
-      cross, lsa4, lsa6 ×2 tasks).  We simplify to the 6 unique expert
-      outputs from a single ``HierarchicalAttentionBlock``.
-    * The **CLK branch** integrates 8 experts (shared, clk + cross, lsa4,
-      lsa6).  We use the 5 relevant experts.
+    * The **EXP branch** integrates 12 experts — all 6 experts from both the
+      EXP-oriented and CLK-oriented attention blocks.
+    * The **CLK branch** integrates 8 experts — (shared, clk) from both blocks
+      plus (cross, lsa4, lsa6) from the CLK-oriented block.
 
     Each branch has its own ``PLEGate`` so the learned mixing weights are
-    task-specific, enabling cross-task knowledge transfer (via shared experts)
-    while preserving task specificity.
+    task-specific, enabling cross-task knowledge transfer (via shared experts
+    and cross-block experts) while preserving task specificity.
     """
 
     def __init__(self, d_model: int):
         super().__init__()
-        # EXP gate: all 6 experts (shared, exp, clk, cross, lsa4, lsa6)
-        self.exp_gate = PLEGate(d_model, num_experts=6)
-        # CLK gate: 5 experts (shared, clk, cross, lsa4, lsa6) — no exp expert
-        self.clk_gate = PLEGate(d_model, num_experts=5)
+        # EXP gate: 12 experts (6 from EXP block + 6 from CLK block)
+        self.exp_gate = PLEGate(d_model, num_experts=12)
+        # CLK gate: 8 experts (shared+clk from each block + cross+lsa4+lsa6 from CLK block)
+        self.clk_gate = PLEGate(d_model, num_experts=8)
 
-    def forward(self, attn_outputs: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self,
+        exp_block_out: dict[str, torch.Tensor],
+        clk_block_out: dict[str, torch.Tensor],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Produce task-specific fused representations for EXP and CLK.
 
         Args:
-            attn_outputs: dict returned by ``HierarchicalAttentionBlock.forward()``.
+            exp_block_out: dict from the EXP-oriented ``HierarchicalAttentionBlock``.
+            clk_block_out: dict from the CLK-oriented ``HierarchicalAttentionBlock``.
 
         Returns:
             (h_exp, h_clk) — each [B, L, D], ready for the prediction heads.
         """
+        # EXP branch: all 12 experts from both blocks
         h_exp = self.exp_gate([
-            attn_outputs["shared"],
-            attn_outputs["exp"],
-            attn_outputs["clk"],
-            attn_outputs["cross"],
-            attn_outputs["lsa4"],
-            attn_outputs["lsa6"],
+            exp_block_out["shared"],
+            exp_block_out["exp"],
+            exp_block_out["clk"],
+            exp_block_out["cross"],
+            exp_block_out["lsa4"],
+            exp_block_out["lsa6"],
+            clk_block_out["shared"],
+            clk_block_out["exp"],
+            clk_block_out["clk"],
+            clk_block_out["cross"],
+            clk_block_out["lsa4"],
+            clk_block_out["lsa6"],
         ])
+        # CLK branch: shared+clk from each block, cross+lsa4+lsa6 from CLK block
         h_clk = self.clk_gate([
-            attn_outputs["shared"],
-            attn_outputs["clk"],
-            attn_outputs["cross"],
-            attn_outputs["lsa4"],
-            attn_outputs["lsa6"],
+            exp_block_out["shared"],
+            exp_block_out["clk"],
+            clk_block_out["shared"],
+            clk_block_out["clk"],
+            clk_block_out["cross"],
+            clk_block_out["lsa4"],
+            clk_block_out["lsa6"],
+            clk_block_out["exp"],
         ])
         return h_exp, h_clk
 
@@ -517,12 +539,17 @@ class CGRModel(nn.Module):
             nn.Dropout(dropout),
         )
 
-        # Stacked hierarchical attention blocks
-        self.attn_blocks = nn.ModuleList(
+        # Dual stacked hierarchical attention blocks (Section 4.3):
+        # EXP-oriented and CLK-oriented blocks produce 6 experts each,
+        # yielding 12 experts for the EXP PLE gate and 8 for the CLK gate.
+        self.exp_attn_blocks = nn.ModuleList(
+            [HierarchicalAttentionBlock(d_model, n_heads, dropout) for _ in range(n_layers)]
+        )
+        self.clk_attn_blocks = nn.ModuleList(
             [HierarchicalAttentionBlock(d_model, n_heads, dropout) for _ in range(n_layers)]
         )
 
-        # PLE fusion (produces task-specific h_exp, h_clk)
+        # PLE fusion (produces task-specific h_exp, h_clk from 12/8 experts)
         self.ple_fusion = PLEFusion(d_model)
 
         # Exposure/click prediction heads (p_exp, p_clk → R(A))
@@ -535,12 +562,15 @@ class CGRModel(nn.Module):
         context_embs: torch.Tensor,
         item_types: torch.Tensor,
         positions: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Project pre-computed upstream embeddings and fuse them (Eq. 10).
 
         Each item's representation is formed by concatenating four d_model
         vectors — one per adapter — and projecting them down through a
         single-layer fusion MLP.
+
+        Also returns the position-aware user-side and item-side representations
+        used by cross-attention (Eq. 12).
 
         Args:
             item_embs: [B, L, item_emb_dim]  — from upstream item tower / DLRM.
@@ -550,7 +580,10 @@ class CGRModel(nn.Module):
             positions: [B, L] optional position indices; defaults to 0..L−1.
 
         Returns:
-            [B, L, d_model] fused item representations ready for attention.
+            (fused, user_repr, item_repr):
+            - fused: [B, L, d_model] fused item representations for SA.
+            - user_repr: [B, L, d_model] position-aware user-side (for cross-attn queries).
+            - item_repr: [B, L, d_model] position-aware item-side (for cross-attn keys).
         """
         B, L, _ = item_embs.shape
         if positions is None:
@@ -564,7 +597,13 @@ class CGRModel(nn.Module):
 
         # Concatenate and fuse: [u_i, c_i, v_i, p_i] with type info added to position
         combined = torch.cat([u, c, v, p + t], dim=-1)  # [B, L, 4*d_model]
-        return self.input_fusion(combined)  # [B, L, d_model]
+        fused = self.input_fusion(combined)  # [B, L, d_model]
+
+        # Position-aware user/item representations for cross-attention (Eq. 12)
+        user_repr = u + p  # user embedding + positional signal
+        item_repr = v + p + t  # item embedding + positional + type signal
+
+        return fused, user_repr, item_repr
 
     def forward(
         self,
@@ -622,24 +661,24 @@ class CGRModel(nn.Module):
             exp_logits: [B, L] per-position exposure logits.
             clk_logits: [B, L] per-position click logits.
         """
-        x = self.encode_items(item_embs, user_embs, context_embs, item_types, positions)
+        x, user_repr, item_repr = self.encode_items(
+            item_embs, user_embs, context_embs, item_types, positions
+        )
 
-        # Apply hierarchical attention blocks sequentially;
-        # the shared output of block k becomes the input to block k+1.
-        attn_out = {
-            "shared": x,
-            "exp": x,
-            "clk": x,
-            "cross": x,
-            "lsa4": x,
-            "lsa6": x,
-        }
-        for block in self.attn_blocks:
-            attn_out = block(x)
-            x = attn_out["shared"]
+        # Apply dual hierarchical attention blocks sequentially.
+        # Each block propagates via its shared expert output.
+        x_exp = x
+        x_clk = x
+        exp_out: dict[str, torch.Tensor] = {}
+        clk_out: dict[str, torch.Tensor] = {}
+        for exp_block, clk_block in zip(self.exp_attn_blocks, self.clk_attn_blocks):
+            exp_out = exp_block(x_exp, user_repr, item_repr)
+            clk_out = clk_block(x_clk, user_repr, item_repr)
+            x_exp = exp_out["shared"]
+            x_clk = clk_out["shared"]
 
-        # PLE fusion on the final block's expert outputs
-        h_exp, h_clk = self.ple_fusion(attn_out)
+        # PLE fusion on the final layer's dual expert outputs (12 + 8)
+        h_exp, h_clk = self.ple_fusion(exp_out, clk_out)
 
         # Prediction heads → per-position logits
         exp_logits, clk_logits = self.exposure_click_head.forward_logits(h_exp, h_clk)

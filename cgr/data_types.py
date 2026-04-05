@@ -88,6 +88,18 @@ class Item:
         """True only for the high-impact large-ad format."""
         return self.item_type == ItemType.LARGE_AD
 
+    @property
+    def visual_slots(self) -> int:
+        """Number of visual slots this item occupies in the feed.
+
+        Standard items occupy 1 slot.  Large ads occupy 2 visual slots
+        (e.g. a full-width banner that spans two normal card heights).
+        In the list representation, a large ad is still one Item, but
+        beam search uses this to account for the extra visual space
+        when enforcing spacing and density constraints.
+        """
+        return 2 if self.is_large_ad else 1
+
 
 @dataclass
 class AdConstraints:
