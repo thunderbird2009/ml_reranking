@@ -6,7 +6,10 @@ The core problem is:
 
 > Given an already-ranked organic list, a small set of ad candidates, and hard placement rules, which final mixed list should we show?
 
-In this setting, the system is not optimizing a single metric. It needs to balance several objectives at once, including ad revenue, user engagement, conversion value, and business constraints such as ad load, spacing, and position limits.
+The workspace contains two closely related CGR-style solutions:
+- `cgr/` predicts exposure and click for each item in a candidate mixed list.
+- `cgr_w_cvr/` extends that setup by adding conversion prediction and per-item profit margin to the reward.
+- In both directories, inference uses the model outputs to compute a list-level reward. And it selects a candidate list to maximize the reward, under business constraints such as ad load, spacing, and position limits.
 
 ## Main Source Directories
 
