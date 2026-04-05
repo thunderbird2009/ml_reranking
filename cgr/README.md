@@ -213,7 +213,10 @@ The current code is best understood as a faithful high-level interpretation of t
 
 ## Training Note
 
-The trainer uses `BCEWithLogitsLoss` rather than plain probability-space BCE.
+The paper describes the training objective at the probability level: predict `p_exp` and `p_clk`, then apply BCE to those predicted probabilities.
+
+This repository intentionally trains one step earlier, on the pre-sigmoid logits, using `BCEWithLogitsLoss` rather than plain probability-space BCE.
+
 That choice matters for two reasons:
 
 1. Logit-space BCE is numerically more stable than applying sigmoid first and then using `BCELoss`.
@@ -224,7 +227,7 @@ Task balance still happens at two levels:
 - `lambda_exp` vs `lambda_clk` balances the exposure task against the click task.
 - `click_positive_class_weight` balances positive vs negative labels within the click task itself.
 
-At inference time, the model still returns probabilities through `CGRModel.forward`, so the logits-only path is a training concern and does not change the reward formula or search interfaces.
+At inference time, the model still returns probabilities through `CGRModel.forward`, so this logits-space training choice is an implementation detail for optimization stability, not a change to the serving-time reward formula or search interfaces.
 
 ## Inference Note
 
