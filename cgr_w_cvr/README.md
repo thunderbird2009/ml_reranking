@@ -6,7 +6,7 @@ Original paper: https://arxiv.org/abs/2603.04227
 
 At a high level, the repository answers one question:
 
-> Given an already-ranked organic feed, a small set of ad candidates, and a set of structural business rules as **hard constraints**, insert ads to the ranked list of organic feed to optimize predefined reward, often based on ads reveue and ads penalty?
+> Given an already-ranked organic feed, a small set of ad candidates, and a set of structural business rules as **hard constraints**, insert ads to the ranked list of organic feed to optimize predefined reward, often based on ads reveue and ads penalty.
 
 The code follows the paper's overall decomposition, but extends it with conversion prediction and profit-margin optimization, as well as beam-search based inference.
 
