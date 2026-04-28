@@ -25,7 +25,7 @@ In addition, it extends with conversion prediction and profit-margin optimizatio
 
 More work in progress: Pareto Efficiency on individual metrics in the total reward
 
-- Feedback-Loop Tuning (PID Control). For ex: A target of Ad Load at exactly 20%
+- Feedback-Loop Tuning (PID Control) on weight vector of the total reward. For ex: A target of Ad Load at exactly 20%
    - If Actual Ad Load < 20%: Increase the Revenue weight ($\alpha$) or decrease the Ad Penalty ($\delta$).
    - If Actual Ad Load > 20%: Do the opposite.
    - Outcome: The system automatically "pushes" into the Pareto front to find the most profitable sequences that still satisfy the 20% constraint.
