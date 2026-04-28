@@ -8,20 +8,24 @@ At a high level, the repository answers one question:
 
 > Given an already-ranked organic feed, a small set of ad candidates, and a set of structural business rules as **hard constraints**, insert ads to the ranked list of organic feed to optimize predefined reward, often based on ads reveue and ads penalty.
 
-The code follows the paper's overall decomposition, and tried to faithfully implement the following key algorithmic features:
+The code follows the paper's overall decomposition, and tried to faithfully implement the following key algorithmic features, though some components are intentionally simplified and may differ materially from the paper.
 
 - structured item representation over pre-computed upstream embeddings
 - dual hierarchical attention with local structural bias
 - two-stage constrained inference over ad insertions
-
->Note: It does not claim to be an exact reproduction of the paper. Several components are intentionally simplified, and some inference details differ materially from the algorithm described in the paper.
 
 In addition, it extends with conversion prediction and profit-margin optimization, as well as beam-search based inference. 
 
 - multi-task exposure, click, and conversion prediction
 - list-level reward computation with ad revenue and per-item profit margin
 - beam-search inference as an alternative heuristic for larger ad budgets
-- In progress: 
+
+More work in progress: Pareto Efficiency on individual metrics in the total reward
+
+- Feedback-Loop Tuning (PID Control). For ex: A target of Ad Load at exactly 20%
+   - If Actual Ad Load < 20%: Increase the Revenue weight ($\alpha$) or decrease the Ad Penalty ($\delta$).
+   - If Actual Ad Load > 20%: Do the opposite.
+   - Outcome: The system automatically "pushes" into the Pareto front to find the most profitable sequences that still satisfy the 20% constraint.
 
 
 ## Table Of Contents
