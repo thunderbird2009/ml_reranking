@@ -6,7 +6,7 @@ Original paper: https://arxiv.org/abs/2603.04227
 
 At a high level, the repository answers one question:
 
-> Given an already-ranked organic feed, a small set of ad candidates, and a set of structural business rules as **hard constraints**, insert ads to the ranked list of organic feed to optimize predefined reward, often based on ads reveue and ads penalty.
+> Given an already-ranked organic feed, a small set of ad candidates, and a set of structural business rules as **hard constraints**, insert ads to the ranked list of organic feed to optimize predefined reward, often based on ads reveue, ads penalty, profit margin of selling an item and engagement.
 
 The code follows the paper's overall decomposition, and tried to faithfully implement the following key algorithmic features, though some components are intentionally simplified and may differ materially from the paper.
 
