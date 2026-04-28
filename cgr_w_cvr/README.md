@@ -12,7 +12,10 @@ The code follows the paper's overall decomposition, and tried to faithfully impl
 
 - structured item representation over pre-computed upstream embeddings
 - dual hierarchical attention with local structural bias
-- two-stage constrained inference over ad insertions
+- Multi-Channel Mixture-of-Experts (MoE) via PLE
+- Cross-Attention for Position Preference
+- Unified Sequence Reward Modeling
+- two-stage constrain-aware reward pruning over space of ad insertions
 
 In addition, it extends with conversion prediction and profit-margin optimization, as well as beam-search based inference. 
 
